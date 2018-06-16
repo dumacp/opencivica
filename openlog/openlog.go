@@ -76,12 +76,9 @@ type UsoTransporte struct {
 
 type FuncParseLog func(data string) interface{}
 
-type Itr Itr
+func TransactionsLogs() itertools.Iter {
 
-
-func TransactionsLogs() Itr {
-
-	iterFile := make(Itr)
+	iterFile := make(itertools.Iter)
 	go func() {
 		defer close(iterFile)
 		files, err := ioutil.ReadDir(PATH_LOGS)
@@ -102,9 +99,9 @@ func TransactionsLogs() Itr {
 	return iterFile
 }
 
-func AppLogs() Itr {
+func AppLogs() itertools.Iter {
 
-	iterFile := make(Itr)
+	iterFile := make(itertools.Iter)
 	go func() {
 		defer close(iterFile)
 		files, err := ioutil.ReadDir(PATH_LOGS)
@@ -126,7 +123,7 @@ func AppLogs() Itr {
 }
 
 /**/
-func MessageData(node *html.Node, iterData Itr, timeout int) {
+func MessageData(node *html.Node, iterData itertools.Iter, timeout int) {
 	defer close(iterData)
 	//fmt.Printf("Node: %v\n", node)
 	if node.Type == html.ElementNode && node.Data == "td" {
@@ -139,9 +136,9 @@ func MessageData(node *html.Node, iterData Itr, timeout int) {
 		}
 		return
 	}
-	itSlice := make([]Itr,0)
+	itSlice := make([]itertools.Iter,0)
 	for c := node.LastChild; c != nil; c = c.PrevSibling {
-		it := make(Itr)
+		it := make(itertools.Iter)
 		itSlice = append(itSlice, it)
 		go MessageData(c, it, timeout)
 	}
@@ -158,7 +155,7 @@ func MessageData(node *html.Node, iterData Itr, timeout int) {
 /**/
 
 /**
-func MessageData(z *html.Tokenizer, iterData Itr, count int) {
+func MessageData(z *html.Tokenizer, iterData itertools.Iter, count int) {
 	//fmt.Printf("z.Token %v: %v\n", count, z)
 	defer close(iterData)
 	for {
@@ -243,7 +240,7 @@ func parseUsoLog(data string) (uso UsoTransporte)  {
 	return
 }
 
-func ParseUsosLog(timeout int) Itr {
+func ParseUsosLog(timeout int) itertools.Iter {
 	trs := ReadTransactions(timeout)
         fMapper := func(i interface{}) interface{} {
                 var usoi interface{}
@@ -255,11 +252,11 @@ func ParseUsosLog(timeout int) Itr {
 }
 
 
-func ReadTransactions(timeout int) Itr {
+func ReadTransactions(timeout int) itertools.Iter {
 
 	iterFile := TransactionsLogs()
 
-	itSlice := make([]Itr,0)
+	itSlice := make([]itertools.Iter,0)
 	for file := range iterFile {
 		content, err := os.Open(PATH_LOGS + file.(os.FileInfo).Name())
 		if err != nil {
@@ -269,7 +266,7 @@ func ReadTransactions(timeout int) Itr {
 		doc, _ := html.Parse(content)
 		//doc := html.NewTokenizer(strings.NewReader(string(content)))
 
-		iterData := make(Itr)
+		iterData := make(itertools.Iter)
 		itSlice = append(itSlice, iterData)
 
 		go MessageData(doc, iterData, timeout)
@@ -278,7 +275,7 @@ func ReadTransactions(timeout int) Itr {
 	return itertools.Chain(itSlice...)
 }
 
-func parseAppVersionLog(data string) interface{} {
+func FuncAppVersionLog(data string) interface{} {
 	if !strings.Contains(data,"Versiones Librearias") {
 		return nil
 	}
@@ -301,7 +298,7 @@ func parseAppVersionLog(data string) interface{} {
 	return versions
 }
 
-func ParseAppLog(f FuncParseLog, timeout int) Itr {
+func ParseAppLog(f FuncParseLog, timeout int) itertools.Iter {
 	trs := ReadAppLogs(timeout)
         fMapper := func(i interface{}) interface{} {
 		return f(i.(string))
@@ -311,7 +308,7 @@ func ParseAppLog(f FuncParseLog, timeout int) Itr {
 }
 
 func AppVersions(timeout int) (versions map[string]string) {
-	itVersions := ParseAppLog(parseAppVersionLog, timeout)
+	itVersions := ParseAppLog(FuncAppVersionLog, timeout)
         fFilter := func(i interface{}) bool {
 		if i != nil {
 			return i.(map[string]string) != nil
@@ -324,11 +321,11 @@ func AppVersions(timeout int) (versions map[string]string) {
 	return vers.(map[string]string)
 }
 
-func ReadAppLogs(timeout int) Itr {
+func ReadAppLogs(timeout int) itertools.Iter {
 
 	iterFile := AppLogs()
 
-	itSlice := make([]Itr,0)
+	itSlice := make([]itertools.Iter,0)
 	for file := range iterFile {
 		content, err := os.Open(PATH_LOGS + file.(os.FileInfo).Name())
 		if err != nil {
@@ -338,7 +335,7 @@ func ReadAppLogs(timeout int) Itr {
 		doc, _ := html.Parse(content)
 		//doc := html.NewTokenizer(strings.NewReader(string(content)))
 
-		iterData := make(Itr)
+		iterData := make(itertools.Iter)
 		itSlice = append(itSlice, iterData)
 
 		go MessageData(doc, iterData, timeout)
@@ -347,8 +344,7 @@ func ReadAppLogs(timeout int) Itr {
 	return itertools.Chain(itSlice...)
 }
 
-func CountUsosAfter(iterUsosLog Itr, timeref int64) int {
-	iterUsosLog := ParseUsosLog(0)
+func CountUsosAfter(iterUsosLog itertools.Iter, timeref int64) int {
 
 	fFilter1 := func(i interface{}) bool {
 		switch v := i.(type) {
@@ -384,8 +380,7 @@ func CountUsosAfter(iterUsosLog Itr, timeref int64) int {
 	return countUsos.(int)
 }
 
-func CountErrorsAfter(iterUsosLog Itr, timeref int64) int {
-	iterUsosLog := ParseUsosLog(0)
+func CountErrorsAfter(iterUsosLog itertools.Iter, timeref int64) int {
 
 	fFilter1 := func(i interface{}) bool {
 		switch v := i.(type) {

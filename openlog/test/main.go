@@ -8,12 +8,12 @@ import (
 
 
 func main() {
-        //log.Printf("error count: %v\n", openlog.CountUsosAfter(0))
         log.Printf("versions: %q\n", openlog.AppVersions(0))
 
-	/**/
 	iterUsosLog := openlog.ParseUsosLog(8)
+        //log.Printf("error count: %v\n", openlog.CountUsosAfter(iterUsosLog,0))
 
+	/**/
 	it := itertools.Tee(iterUsosLog, 2)
 
 	fFilter1 := func(i interface{}) bool {
