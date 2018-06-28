@@ -10,6 +10,7 @@ import (
 	"time"
 	"strings"
 	"unicode"
+	"regexp"
 	"io/ioutil"
 	"encoding/json"
 	"golang.org/x/net/html"
@@ -19,11 +20,14 @@ import (
 
 const (
 	PATH_LOGS = "/SD/OpenCivica_Files/logs/"
+	SHORT_FORM = "2018-04-17 11:53:48"
 )
 
 type Civica interface{}
 
+//Transportation Use object
 type UsoTransporte struct {
+	TipoTarjeta	string
 	CivicaBefore	Civica
 	CivicaAfter	Civica
 	PTtvId		int	`json:"p_ttv_id:`
@@ -74,13 +78,23 @@ type UsoTransporte struct {
 	EscrituraMs	int	`json:"escrituraMs"`
 }
 
-type FuncParseLog func(data string) interface{}
+type AppLogData struct {
+	TimeRef		int64
+	Data		interface{}
+}
 
-func TransactionsLogs() itertools.Iter {
+//Function to Filter in Parse Iteration
+type FuncParseLog func(data string) AppLogData
+
+//Iter of App Log Transsaction (transacciones.html*)
+func TransactionsLogs(quit <-chan int) itertools.Iter {
 
 	iterFile := make(itertools.Iter)
 	go func() {
-		defer close(iterFile)
+		defer func() {
+			//fmt.Println("Salida TransactionsLogs")
+			close(iterFile)
+		}()
 		files, err := ioutil.ReadDir(PATH_LOGS)
 		if err != nil {
 			iterFile <- err
@@ -90,20 +104,28 @@ func TransactionsLogs() itertools.Iter {
 		for _, file := range files {
 			if strings.HasPrefix(file.Name(), "transacciones.html") {
 				//fmt.Println(file.Name())
-				iterFile <- file
+				/**/
+				select {
+				case <-quit:
+					//fmt.Println("QUIT0 !!!!!!!! 1")
+					return
+				case iterFile <- file:
+				}
+				/**/
 			}
 		}
 		return
 	}()
-
 	return iterFile
 }
-
-func AppLogs() itertools.Iter {
+//Iter of APP Logs (log.html*)
+func AppLogs(quit <-chan int) itertools.Iter {
 
 	iterFile := make(itertools.Iter)
 	go func() {
-		defer close(iterFile)
+		defer func() {
+			close(iterFile)
+		}()
 		files, err := ioutil.ReadDir(PATH_LOGS)
 		if err != nil {
 			iterFile <- err
@@ -112,69 +134,61 @@ func AppLogs() itertools.Iter {
 		utils.SortFileInfo(files)
 		for _, file := range files {
 			if strings.HasPrefix(file.Name(), "log.html") {
-				//fmt.Println(file.Name())
-				iterFile <- file
+				select {
+				case <-quit:
+					return
+				case iterFile <- file:
+				}
 			}
 		}
 		return
 	}()
-
 	return iterFile
 }
 
 /**/
-func MessageData(node *html.Node, iterData itertools.Iter, timeout int) {
-	defer close(iterData)
-	//fmt.Printf("Node: %v\n", node)
+func messageData(node *html.Node, timeout int) string {
 	if node.Type == html.ElementNode && node.Data == "td" {
 		for _, a := range node.Attr {
 			if a.Key == "title" && a.Val == "Message" {
-				//fmt.Printf("node.Next %v: %s\n", node.Data, node.FirstChild.Data)
-				iterData <- node.FirstChild.Data
-				return
+				return node.FirstChild.Data
 			}
 		}
-		return
+		return ""
 	}
-	itSlice := make([]itertools.Iter,0)
-	for c := node.LastChild; c != nil; c = c.PrevSibling {
-		it := make(itertools.Iter)
-		itSlice = append(itSlice, it)
-		go MessageData(c, it, timeout)
-	}
-
-	for _, ch := range itSlice {
-		for v := range ch {
-			iterData <- v
-		}
-	}
-	if timeout > 0 {
-		time.Sleep(time.Millisecond * time.Duration(timeout))
-	}
+	return ""
 }
 /**/
 
-/**
-func MessageData(z *html.Tokenizer, iterData itertools.Iter, count int) {
-	//fmt.Printf("z.Token %v: %v\n", count, z)
-	defer close(iterData)
-	for {
-		tt := z.Next()
-		switch tt {
-		case html.StartTagToken:
-			t := z.Token()
-			if t.Data == "td" {
-				inner := z.Next()
-				if inner == html.TextToken {
-					iterData <- string(z.Text())
+/**/
+//Extract MessageData from Log html
+func MessageData(node *html.Node, iterData itertools.Iter, timeout int, quit <-chan int) bool {
+	defer func() {
+		if timeout == 0 {
+			close(iterData)
+		}
+	}()
+	if node.Type == html.ElementNode && node.Data == "td" {
+		for _, a := range node.Attr {
+			if a.Key == "title" && a.Val == "Message" {
+				if node.FirstChild.Data != "" {
+					select {
+					case <-quit:
+						return false
+					case iterData <- node.FirstChild.Data:
+					}
 				}
+				return true
 			}
-		case html.ErrorToken:
-			fmt.Printf("ErrorToken: %v\n", z.Err())
-			fmt.Printf("ErrorData: %s\n", z.Text())
-			return
+		}
+		return true
+	}
+	for c := node.LastChild; c != nil; c = c.PrevSibling {
+		if !MessageData(c, iterData, timeout+1, quit) {
+			return false
 		}
 	}
+	return true
 }
 /**/
 
@@ -240,51 +254,121 @@ func parseUsoLog(data string) (uso UsoTransporte)  {
 	return
 }
 
-func ParseUsosLog(timeout int) itertools.Iter {
-	trs := ReadTransactions(timeout)
+//Parse Log Transaction in UsosTranspote
+func ParseUsosLog(trs itertools.Iter, quit <-chan int) itertools.Iter {
+	/**/
+	quit0 := make(chan int)
+	quit1 := make(chan int)
+	go func() {
+		id := <-quit
+		go func() {
+			select {
+			case quit0 <- id:
+			default:
+				close(quit0)
+			}
+		}()
+		go func() {
+			select {
+			case quit1 <- id:
+			default:
+				close(quit1)
+			}
+		}()
+	}()
+	/**/
+
         fMapper := func(i interface{}) interface{} {
-                var usoi interface{}
-                usoi = parseUsoLog(i.(string))
-                return usoi
+		switch v:= i.(type) {
+                case string:
+			return parseUsoLog(v)
+		}
+		return parseUsoLog("")
         }
 
-        return  itertools.Map(fMapper, trs)
+	itMap := itertools.MapQuit(fMapper, trs, quit0)
+
+	fFilter := func(i interface{}) bool {
+		switch v := i.(type) {
+		case UsoTransporte:
+			return v != UsoTransporte{}
+		}
+		return false
+	}
+	return itertools.FilterQuit(fFilter, itMap, quit1)
+
 }
 
+//Read log Transactions until quit<- channel
+func ReadTransactions(timeout int, quit <-chan int) itertools.Iter {
 
-func ReadTransactions(timeout int) itertools.Iter {
+	quit0 := make(chan int)
+	quit1 := make(chan int)
 
-	iterFile := TransactionsLogs()
+	iterFile := TransactionsLogs(quit0)
+	itData := make(itertools.Iter)
+	go func() {
+		id := 0
+		defer func() {
+			go func() {
+				select {
+				case quit0 <- id:
+				default:
+					close(quit0)
+				}
+			}()
+			go func() {
+				select {
+				case quit1 <- id:
+				default:
+					close(quit1)
+				}
+			}()
+			close(itData)
+		}()
+		for file := range iterFile {
+			content, err := os.Open(PATH_LOGS + file.(os.FileInfo).Name())
+			if err != nil {
+				fmt.Println("ERROR: ",err)
+			}
+			doc, _ := html.Parse(content)
+			iterData := make(itertools.Iter)
+			go MessageData(doc, iterData, 0, quit1)
+			content.Close()
+			doc = nil
 
-	itSlice := make([]itertools.Iter,0)
-	for file := range iterFile {
-		content, err := os.Open(PATH_LOGS + file.(os.FileInfo).Name())
-		if err != nil {
-			fmt.Println("ERROR: ",err)
+			for el := range iterData {
+				select {
+				case id = <-quit:
+					return
+				case itData <- el:
+				}
+			}
 		}
+	}()
+	return itData
+}
 
-		doc, _ := html.Parse(content)
-		//doc := html.NewTokenizer(strings.NewReader(string(content)))
-
-		iterData := make(itertools.Iter)
-		itSlice = append(itSlice, iterData)
-
-		go MessageData(doc, iterData, timeout)
+//Function to Parse App Version info
+func FuncAppVersionLog(data string) AppLogData {
+	appData := AppLogData{}
+	if !strings.Contains(data,"Versiones Librearias") {
+		return appData
 	}
 
-	return itertools.Chain(itSlice...)
-}
-
-func FuncAppVersionLog(data string) interface{} {
-	if !strings.Contains(data,"Versiones Librearias") {
-		return nil
+	re := regexp.MustCompile("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")
+	timeS := re.FindString(data)
+	if timeS != "" {
+		loc, _ := time.LoadLocation("America/Bogota")
+		t, _ := time.ParseInLocation(SHORT_FORM, timeS, loc)
+		appData.TimeRef = t.UnixNano()
 	}
 
 	/**/
 	fieldsRaw := strings.Split(data, "\n")
 
 	if len(fieldsRaw) < 3 {
-		return nil
+		return appData
 	}
 
 	versions := make(map[string]string)
@@ -295,65 +379,192 @@ func FuncAppVersionLog(data string) interface{} {
 		}
 	}
 
-	return versions
+	appData.Data = versions
+
+	return appData
 }
 
-func ParseAppLog(f FuncParseLog, timeout int) itertools.Iter {
-	trs := ReadAppLogs(timeout)
-        fMapper := func(i interface{}) interface{} {
-		return f(i.(string))
-        }
-
-	return itertools.Map(fMapper, trs)
-}
-
-func AppVersions(timeout int) (versions map[string]string) {
-	itVersions := ParseAppLog(FuncAppVersionLog, timeout)
-        fFilter := func(i interface{}) bool {
-		if i != nil {
-			return i.(map[string]string) != nil
-		}
-		return false
-        }
-
-	itVers := itertools.Filter(fFilter, itVersions)
-	vers := <-itVers
-	return vers.(map[string]string)
-}
-
-func ReadAppLogs(timeout int) itertools.Iter {
-
-	iterFile := AppLogs()
-
-	itSlice := make([]itertools.Iter,0)
-	for file := range iterFile {
-		content, err := os.Open(PATH_LOGS + file.(os.FileInfo).Name())
-		if err != nil {
-			fmt.Println("ERROR: ",err)
-		}
-
-		doc, _ := html.Parse(content)
-		//doc := html.NewTokenizer(strings.NewReader(string(content)))
-
-		iterData := make(itertools.Iter)
-		itSlice = append(itSlice, iterData)
-
-		go MessageData(doc, iterData, timeout)
+//Function to Parse Tables Version info in App
+func FuncTabVersionLog(data string) AppLogData {
+	appData := AppLogData{}
+	if !strings.Contains(data,"Se han actualizado las siguientes tablas") && !strings.Contains(data,"ha iniciado con") {
+		return appData
 	}
 
-	return itertools.Chain(itSlice...)
+	/**/
+	re1 := regexp.MustCompile("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")
+	timeS := re1.FindString(data)
+	if timeS != "" {
+		loc, _ := time.LoadLocation("America/Bogota")
+		t, _ := time.ParseInLocation(SHORT_FORM, timeS, loc)
+		appData.TimeRef = t.UnixNano()
+	}
+
+	re2 := regexp.MustCompile("siguientes tablas: +\\[(.+):(.+)\\]")
+	fields2 := re2.FindStringSubmatch(data)
+
+	if len(fields2) > 2 && fields2[1] != "" && fields2[2] != "" {
+		versions2 := map[string]string{ fields2[1]: fields2[2] }
+		appData.Data = versions2
+		return appData
+	}
+
+	re3 := regexp.MustCompile("ha iniciado con (.+) en version: (\\d+\\.{0,1}\\d{0,4})")
+        fields3 := re3.FindStringSubmatch(data)
+
+	if len(fields3) > 2 && fields3[1] != "" && fields3[2] != "" {
+		versions3 := map[string]string{ fields3[1]: fields3[2] }
+		appData.Data = versions3
+		return appData
+	}
+
+	return appData
 }
 
-func CountUsosAfter(iterUsosLog itertools.Iter, timeref int64) int {
+//Iter to Parse Function in Iter Data Log
+func ParseAppLog(f FuncParseLog, trs itertools.Iter, quit <-chan int) itertools.Iter {
+	/**/
+	quit0 := make(chan int)
+	quit1 := make(chan int)
+	go func() {
+		id := <-quit
+		go func() {
+			select {
+			case quit0 <- id:
+			default:
+				close(quit0)
+			}
+		}()
+		go func() {
+			select {
+			case quit1 <- id:
+			default:
+				close(quit1)
+			}
+		}()
+	}()
+	/**/
+
+        fMapper := func(i interface{}) interface{} {
+		switch v:= i.(type) {
+                case string:
+			return f(v)
+                }
+		return f("")
+        }
+
+	it := itertools.MapQuit(fMapper, trs, quit0)
+
+	fFilter := func(i interface{}) bool {
+		switch v:= i.(type) {
+		case AppLogData:
+			return v != AppLogData{}
+		}
+		return false
+	}
+
+	return itertools.FilterQuit(fFilter, it, quit1)
+}
+
+//Iter to Parse App Version info in App
+func AppVersions(trs itertools.Iter, quit <-chan int) (versions map[string]string) {
+	itVersions := ParseAppLog(FuncAppVersionLog, trs, quit)
+	vers := <-itVersions
+	if vers == nil {
+		return
+	}
+	return vers.(AppLogData).Data.(map[string]string)
+}
+
+//Iter to Parse Tables Version info in App
+func TabVersions(trs itertools.Iter, quit <-chan int) (versions map[string]string) {
+	itVersions := ParseAppLog(FuncTabVersionLog, trs, quit)
+	mapVers := make(map[string]string)
+	for v:= range itVersions {
+		switch tab := v.(type) {
+		case AppLogData:
+			switch libv := tab.Data.(type) {
+			case map[string]string: 
+				for key, value := range libv {
+					if _, ok := mapVers[key]; !ok {
+					mapVers[key] = value
+					}
+				}
+			}
+		}
+	}
+
+	return mapVers
+}
+
+//Iter to App Logs Data
+func ReadAppLogs(timeout int, quit <-chan int) itertools.Iter {
+
+	quit0 := make(chan int)
+	quit1 := make(chan int)
+	iterFile := AppLogs(quit0)
+
+	/**/
+	itData := make(itertools.Iter)
+	go func() {
+		id := 0
+		defer func() {
+			go func() {
+				select {
+				case quit0 <- id:
+				default:
+					close(quit0)
+				}
+			}()
+			go func() {
+				select {
+				case quit1 <- id:
+				default:
+					close(quit1)
+				}
+			}()
+			close(itData)
+		}()
+		for file := range iterFile {
+			content, err := os.Open(PATH_LOGS + file.(os.FileInfo).Name())
+			if err != nil {
+				fmt.Println("ERROR: ",err)
+			}
+
+			doc, _ := html.Parse(content)
+
+			iterData := make(itertools.Iter)
+
+			go MessageData(doc, iterData, 0, quit1)
+			content.Close()
+			doc = nil
+			for el := range iterData {
+				select {
+				case id = <-quit:
+					return
+				case itData <- el:
+				}
+			}
+		}
+	}()
+	/**/
+	return itData
+}
+
+func CountUsosAfter(iterUsosLog itertools.Iter, timeref int64, quit <-chan int) (int64, int64) {
 
 	fFilter1 := func(i interface{}) bool {
 		switch v := i.(type) {
 		case UsoTransporte:
-			return v.Exitoso
+			ok := v.Exitoso
+			if ok {
+				return ok
+			}
+			return false
 		}
 		return false
 	}
-	iterUsos := itertools.Filter(fFilter1,iterUsosLog)
+	iterUsos := itertools.FilterQuit(fFilter1,iterUsosLog, quit)
 
 	fFilter2 := func(i interface{}) bool {
 		switch v := i.(type) {
@@ -368,20 +579,23 @@ func CountUsosAfter(iterUsosLog itertools.Iter, timeref int64) int {
 	iterUsosAfter := itertools.TakeWhile(fFilter2,iterUsos)
 
 	fReducer := func(memo interface{}, element interface{}) interface{} {
-		switch element.(type) {
+		switch v:= element.(type) {
 		case UsoTransporte:
-			return memo.(int) + 1
+			if v.UsoId > memo.([]int64)[1] {
+				memo.([]int64)[1] = v.UsoId
+			}
+			memo.([]int64)[0] = memo.([]int64)[0] + 1
 		}
-		return memo.(int)
+		return memo
 	}
 
-	countUsos := itertools.Reduce(iterUsosAfter, fReducer, 0)
+	memo := []int64{0,0}
+	countUsos := itertools.Reduce(iterUsosAfter, fReducer, memo)
 
-	return countUsos.(int)
+	return countUsos.(([]int64))[0], countUsos.(([]int64))[1]
 }
 
-func CountErrorsAfter(iterUsosLog itertools.Iter, timeref int64) int {
-
+func CountErrorsAfter(iterUsosLog itertools.Iter, timeref int64, quit <-chan int) (int64, int64) {
 	fFilter1 := func(i interface{}) bool {
 		switch v := i.(type) {
 		case UsoTransporte:
@@ -389,7 +603,7 @@ func CountErrorsAfter(iterUsosLog itertools.Iter, timeref int64) int {
 		}
 		return false
 	}
-	iterUsos := itertools.Filter(fFilter1,iterUsosLog)
+	iterUsos := itertools.FilterQuit(fFilter1,iterUsosLog, quit)
 
 	fFilter2 := func(i interface{}) bool {
 		switch v := i.(type) {
@@ -404,16 +618,20 @@ func CountErrorsAfter(iterUsosLog itertools.Iter, timeref int64) int {
 	iterUsosAfter := itertools.TakeWhile(fFilter2,iterUsos)
 
 	fReducer := func(memo interface{}, element interface{}) interface{} {
-		switch element.(type) {
+		switch v := element.(type) {
 		case UsoTransporte:
-			return memo.(int) + 1
+			if v.UsoId > memo.([]int64)[1] {
+				memo.([]int64)[1] = v.UsoId
+			}
+			memo.([]int64)[0] = memo.([]int64)[0] + 1
 		}
-		return memo.(int)
+		return memo
 	}
 
-	countUsos := itertools.Reduce(iterUsosAfter, fReducer, 0)
+	memo := []int64{0,0}
+	countUsos := itertools.Reduce(iterUsosAfter, fReducer, memo)
 
-	return countUsos.(int)
+	return countUsos.(([]int64))[0], countUsos.(([]int64))[1]
 }
 
 

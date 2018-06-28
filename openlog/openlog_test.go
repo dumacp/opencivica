@@ -3,14 +3,16 @@ package openlog
 import (
 	"os"
 	_ "time"
-	"github.com/yanatan16/itertools"
+	_ "github.com/yanatan16/itertools"
 	"testing"
+	"github.com/dumacp/utils"
 )
 
 
 func TestTransactionsLogs(t *testing.T) {
 	t.Log("Start Logs")
-	for i := range TransactionsLogs() {
+	quit1 := make(chan int)
+	for i := range TransactionsLogs(quit1) {
 		switch v := i.(type) {
 		case error:
 			t.Errorf("error: %s", v)
@@ -18,6 +20,7 @@ func TestTransactionsLogs(t *testing.T) {
 			t.Logf("transaction file: %s", v.Name())
 		}
 	}
+	utils.CloseChannels(11, quit1)
 	t.Log("Stop Logs")
 }
 
@@ -53,27 +56,14 @@ func TestParseUsosLog(t *testing.T) {
 
 
 func TestCountUsoAfter(t *testing.T) {
-        t.Logf("uso count: %v", CountUsosAfter(1523984060009))
+	quit1 := make(chan int)
+	quit2 := make(chan int)
+	quit3 := make(chan int)
+	trs := ReadTransactions(0, quit1)
+	usosLog := ParseUsosLog(trs, quit2)
+	usos, tRef := CountUsosAfter(usosLog, 0, quit3)
+	//usos, tRef := CountUsosAfter(usosLog, 1523984060009, quit3)
 
-	it := ParseUsosLog(10)
-
-	fFilter := func(i interface{}) bool {
-		switch v:= i.(type) {
-		case UsoTransporte:
-			return v.Exitoso
-		}
-		return false
-	}
-
-	itExitosos := itertools.Filter(fFilter, it)
-
-	fMapper := func(i interface{}) interface{} {
-		return i.(UsoTransporte).UsoId
-	}
-
-	itUsoId := itertools.Map(fMapper, itExitosos)
-
-	list := itertools.List(itUsoId)
-
-	t.Logf("lista: %v\n, count: %v", list, len(list))
+	utils.CloseChannels(11, quit1, quit2, quit3)
+        t.Logf("uso count: %v (%v)", usos, tRef)
 }
