@@ -89,8 +89,8 @@ flag.Parse()
 
 
 		fFilter0 := func(i interface{}) bool {
-			//return i.(openlog.UsoTransporte).UsoId > 1528580904699
-			return i.(openlog.UsoTransporte).UsoId > 1523989505114
+			return i.(openlog.UsoTransporte).UsoId > 1530225830461
+			//return i.(openlog.UsoTransporte).UsoId > 1523989505114
 			//return i.(openlog.UsoTransporte).UsoId > 0
 		}
 
@@ -122,95 +122,8 @@ flag.Parse()
 		log.Printf("usos count: %v\n", countUsos)
 
 
-		utils.CloseChannel(quit4, 14)
-		utils.FinishChannel(itErrors)
-		utils.FinishChannel(itUsos)
-		utils.FinishChannel(it[1])
-		utils.FinishChannel(it[0])
-		utils.FinishChannel(itLast)
-		utils.FinishChannel(iterUsosLog)
-		/**/
-
-		/**
-		select {
-		case quit3 <- true:
-			log.Println("CLOSE channels 1")
-		default:
-			close(quit3)
-			break
-		}
-		/**
-		select {
-		case quit4 <- 11:
-			log.Println("CLOSE channels 2")
-		default:
-			close(quit4)
-			break
-		}
-		/**
-		select {
-		case <-iterTranss:
-			log.Println("CLOSE channels 3")
-		//default:
-		}
-		/**
-		select {
-		case <-iterUsosLog:
-			log.Println("CLOSE channels 4")
-		default:
-			/**
-			i := 0
-			for v := range iterUsosLog {
-				log.Printf("count: %v; %v", i, v)
-				i = i + 1
-			}
-			/**
-		}
-		/**
-		select {
-		case <-iterUsosLog:
-			log.Println("CLOSE channels 4.1")
-		default:
-			/**
-			i := 0
-			for v := range iterUsosLog {
-				log.Printf("count: %v; %v", i, v)
-				i = i + 1
-			}
-			/**
-		}
-		/**
-		select {
-		case <-itLast:
-			log.Println("CLOSE channels 5")
-		//default:
-		}
-		/**
-		select {
-		case <-itUsos:
-			log.Println("CLOSE channels 6")
-		//default:
-		}
-		/**
-		select {
-		case <-itErrors:
-			log.Println("CLOSE channels 7")
-		//default:
-		}
-		/**
-		select {
-		case <-it[0]:
-			log.Println("CLOSE channels 8")
-		//default:
-		}
-		/**
-		select {
-		case <-it[1]:
-			log.Println("CLOSE channels 9")
-		//default:
-		}
-
-		/**/
+		utils.CloseChannel(14, quit4)
+		utils.FinishChannel(itErrors, itUsos, it[0], it[1], itLast, iterUsosLog, iterTranss)
 
 		time.Sleep(time.Second * 6)
 		num := runtime.NumGoroutine()

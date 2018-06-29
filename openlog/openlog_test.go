@@ -1,7 +1,7 @@
 package openlog
 
 import (
-	"os"
+	_ "os"
 	_ "time"
 	_ "github.com/yanatan16/itertools"
 	"testing"
@@ -11,18 +11,29 @@ import (
 
 func TestTransactionsLogs(t *testing.T) {
 	t.Log("Start Logs")
-	quit1 := make(chan int)
-	for i := range TransactionsLogs(quit1) {
+	for _, file := range TransactionsLogs() {
+		t.Logf("transaction file: %s", file.Name())
+	}
+	t.Log("Stop Logs")
+}
+
+/**/
+func TestReadTransactionsTail(t *testing.T) {
+	t.Log("Start Transs")
+	quit := make(chan int)
+	iter := ReadTransactionsTail(3, quit)
+	for i := range iter {
 		switch v := i.(type) {
 		case error:
 			t.Errorf("error: %s", v)
-		case os.FileInfo:
-			t.Logf("transaction file: %s", v.Name())
+		case string:
+			t.Logf("transaction data: %s\n", v)
+			utils.CloseChannels(11, quit)
 		}
 	}
-	utils.CloseChannels(11, quit1)
-	t.Log("Stop Logs")
+	t.Log("Stop Transs")
 }
+/**/
 
 /**
 func TestReadTransactions(t *testing.T) {
@@ -38,6 +49,7 @@ func TestReadTransactions(t *testing.T) {
 	t.Log("Stop Transs")
 }
 /**/
+
 
 /**
 func TestParseUsosLog(t *testing.T) {

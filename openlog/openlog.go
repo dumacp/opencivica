@@ -8,9 +8,11 @@ import (
 	"os"
 	"fmt"
 	"time"
+	"bytes"
 	"strings"
 	"unicode"
 	"regexp"
+	_ "syscall"
 	"io/ioutil"
 	"encoding/json"
 	"golang.org/x/net/html"
@@ -24,6 +26,9 @@ const (
 )
 
 type Civica interface{}
+type Data struct {
+	buffer	[]string
+}
 
 //Transportation Use object
 type UsoTransporte struct {
@@ -87,76 +92,53 @@ type AppLogData struct {
 type FuncParseLog func(data string) AppLogData
 
 //Iter of App Log Transsaction (transacciones.html*)
-func TransactionsLogs(quit <-chan int) itertools.Iter {
-
-	iterFile := make(itertools.Iter)
-	go func() {
-		defer func() {
-			//fmt.Println("Salida TransactionsLogs")
-			close(iterFile)
-		}()
-		files, err := ioutil.ReadDir(PATH_LOGS)
-		if err != nil {
-			iterFile <- err
-			return
+func TransactionsLogs() []os.FileInfo {
+	files, err := ioutil.ReadDir(PATH_LOGS)
+	if err != nil {
+		return nil
+	}
+	utils.SortFileInfo(files)
+	filesTrs := make([]os.FileInfo,0)
+	for _, file := range files {
+		if strings.HasPrefix(file.Name(), "transacciones.html") {
+			filesTrs = append(filesTrs, file)
 		}
-		utils.SortFileInfo(files)
-		for _, file := range files {
-			if strings.HasPrefix(file.Name(), "transacciones.html") {
-				//fmt.Println(file.Name())
-				/**/
-				select {
-				case <-quit:
-					//fmt.Println("QUIT0 !!!!!!!! 1")
-					return
-				case iterFile <- file:
-				}
-				/**/
-			}
-		}
-		return
-	}()
-	return iterFile
+	}
+	return filesTrs
 }
-//Iter of APP Logs (log.html*)
-func AppLogs(quit <-chan int) itertools.Iter {
 
-	iterFile := make(itertools.Iter)
-	go func() {
-		defer func() {
-			close(iterFile)
-		}()
-		files, err := ioutil.ReadDir(PATH_LOGS)
-		if err != nil {
-			iterFile <- err
-			return
+//Iter of APP Logs (log.html*)
+func AppLogs() []os.FileInfo {
+
+	files, err := ioutil.ReadDir(PATH_LOGS)
+	if err != nil {
+		return nil
+	}
+	utils.SortFileInfo(files)
+	filesLog := make([]os.FileInfo,0)
+	for _, file := range files {
+		if strings.HasPrefix(file.Name(), "log.html") {
+			filesLog = append(filesLog, file)
 		}
-		utils.SortFileInfo(files)
-		for _, file := range files {
-			if strings.HasPrefix(file.Name(), "log.html") {
-				select {
-				case <-quit:
-					return
-				case iterFile <- file:
-				}
-			}
-		}
-		return
-	}()
-	return iterFile
+	}
+	return filesLog
 }
 
 /**/
-func messageData(node *html.Node, timeout int) string {
+func messageData(node *html.Node, data *Data) {
 	if node.Type == html.ElementNode && node.Data == "td" {
 		for _, a := range node.Attr {
 			if a.Key == "title" && a.Val == "Message" {
-				return node.FirstChild.Data
+				data.buffer = append(data.buffer, node.FirstChild.Data)
+				//fmt.Println("append buf: ", data.buffer)
+				return
 			}
 		}
-		return ""
+		return
 	}
-	return ""
+	for c := node.LastChild; c != nil; c = c.PrevSibling {
+		messageData(c, data)
+	}
 }
 /**/
 
@@ -255,8 +237,8 @@ func parseUsoLog(data string) (uso UsoTransporte)  {
 }
 
 //Parse Log Transaction in UsosTranspote
-func ParseUsosLog(trs itertools.Iter, quit <-chan int) itertools.Iter {
-	/**/
+func ParseUsosLog(trs itertools.Iter) itertools.Iter {
+	/**
 	quit0 := make(chan int)
 	quit1 := make(chan int)
 	go func() {
@@ -286,7 +268,7 @@ func ParseUsosLog(trs itertools.Iter, quit <-chan int) itertools.Iter {
 		return parseUsoLog("")
         }
 
-	itMap := itertools.MapQuit(fMapper, trs, quit0)
+	itMap := itertools.Map(fMapper, trs)
 
 	fFilter := func(i interface{}) bool {
 		switch v := i.(type) {
@@ -295,28 +277,23 @@ func ParseUsosLog(trs itertools.Iter, quit <-chan int) itertools.Iter {
 		}
 		return false
 	}
-	return itertools.FilterQuit(fFilter, itMap, quit1)
+
+	return itertools.Filter(fFilter, itMap)
+	/**/
+
 
 }
 
 //Read log Transactions until quit<- channel
 func ReadTransactions(timeout int, quit <-chan int) itertools.Iter {
 
-	quit0 := make(chan int)
 	quit1 := make(chan int)
 
-	iterFile := TransactionsLogs(quit0)
+	files := TransactionsLogs()
 	itData := make(itertools.Iter)
 	go func() {
 		id := 0
 		defer func() {
-			go func() {
-				select {
-				case quit0 <- id:
-				default:
-					close(quit0)
-				}
-			}()
 			go func() {
 				select {
 				case quit1 <- id:
@@ -326,7 +303,7 @@ func ReadTransactions(timeout int, quit <-chan int) itertools.Iter {
 			}()
 			close(itData)
 		}()
-		for file := range iterFile {
+		for _, file := range files {
 			content, err := os.Open(PATH_LOGS + file.(os.FileInfo).Name())
 			if err != nil {
 				fmt.Println("ERROR: ",err)
@@ -342,6 +319,110 @@ func ReadTransactions(timeout int, quit <-chan int) itertools.Iter {
 				case id = <-quit:
 					return
 				case itData <- el:
+				}
+			}
+		}
+	}()
+	return itData
+}
+
+
+type TimeMod struct {
+	Nsec	int64
+	Sec	int64
+}
+
+type Sys struct {
+	Ctim	TimeMod
+	Atim	TimeMod
+	Mtim	TimeMod
+}
+
+
+//Read log Transactions in mode "Tail" until quit<- channel
+func ReadTransactionsTail(timeout int, quit <-chan int) itertools.Iter {
+	itData := make(itertools.Iter)
+	go func() {
+		defer close(itData)
+		stat0, err := os.Stat(PATH_LOGS + "transacciones.html")
+		//fmt.Printf("stat0: %+v\n", stat0)
+		if err != nil {
+			fmt.Println("ERROR: ",err)
+		}
+		buff := make([]byte,1024)
+		if timeout <= 0 {
+			timeout = 1
+		}
+		timer := time.Tick(time.Second * time.Duration(timeout))
+					file, err := os.Open(PATH_LOGS + "transacciones.html")
+					if err != nil {
+						fmt.Println("ERROR: ",err)
+						return
+					}
+					defer file.Close()
+		for {
+			select {
+			case <-quit:
+				return
+			case <-timer:
+				stat1, err := os.Stat(PATH_LOGS + "transacciones.html")
+				if err != nil {
+					fmt.Println("ERROR: ",err)
+				}
+				//fmt.Printf("stat1: %+v\n", stat1)
+				if stat0.Size() != stat1.Size() || stat0.ModTime() != stat1.ModTime() {
+				//|| (stat0.Sys().(*syscall.Stat_t)).Ctim != (stat1.Sys().(*syscall.Stat_t)).Ctim {
+					//fmt.Println("changed!!!!!!")
+					size := stat1.Size() - stat0.Size()
+					if size >= 0 {
+						file.Seek(-size, 2)
+						//fmt.Printf("size: %v, seek: %v\n", size, seek)
+					} else {
+						file.Seek(stat0.Size(), 0)
+						//fmt.Printf("size: %v, seek: %v\n", size, seek)
+					}
+					stat0 = stat1
+					content := bytes.NewBuffer([]byte("<html><table>"))
+					for i:=0; i>=0; i++ {
+						n1, err := file.Read(buff)
+						if err != nil || n1 <= 0 {
+							//fmt.Printf("ERROR!!!!: %s, %v, iter: %v\n", err, n1, i)
+							break
+						}
+						content.Write(buff)
+					}
+
+					if size < 0 {
+						//fmt.Println("ReOpen!!!!")
+						file.Close()
+						file, err = os.Open(PATH_LOGS + "transacciones.html")
+						if err != nil {
+							fmt.Println("ERROR: ",err)
+						}
+						for i:=0; i>=0; i++ {
+							n1, err := file.Read(buff)
+							if err != nil || n1 <= 0 {
+								//fmt.Printf("ERROR!!!!: %s, %v, iter: %v\n", err, n1, i)
+								break
+							}
+							content.Write(buff)
+						}
+                                        }
+
+
+					//fmt.Printf("Content %s\n", content)
+					doc, _ := html.Parse(content)
+					data := &Data{}
+					messageData(doc, data)
+					//fmt.Println("saliendo de messageData: ", data.buffer)
+					for _, v := range data.buffer {
+						select {
+						case <-quit:
+							return
+						case itData <- v:
+						}
+					}
+					//file.Close()
 				}
 			}
 		}
@@ -422,8 +503,8 @@ func FuncTabVersionLog(data string) AppLogData {
 }
 
 //Iter to Parse Function in Iter Data Log
-func ParseAppLog(f FuncParseLog, trs itertools.Iter, quit <-chan int) itertools.Iter {
-	/**/
+func ParseAppLog(f FuncParseLog, trs itertools.Iter) itertools.Iter {
+	/**
 	quit0 := make(chan int)
 	quit1 := make(chan int)
 	go func() {
@@ -444,7 +525,6 @@ func ParseAppLog(f FuncParseLog, trs itertools.Iter, quit <-chan int) itertools.
 		}()
 	}()
 	/**/
-
         fMapper := func(i interface{}) interface{} {
 		switch v:= i.(type) {
                 case string:
@@ -452,8 +532,7 @@ func ParseAppLog(f FuncParseLog, trs itertools.Iter, quit <-chan int) itertools.
                 }
 		return f("")
         }
-
-	it := itertools.MapQuit(fMapper, trs, quit0)
+	itMap := itertools.Map(fMapper, trs)
 
 	fFilter := func(i interface{}) bool {
 		switch v:= i.(type) {
@@ -463,12 +542,15 @@ func ParseAppLog(f FuncParseLog, trs itertools.Iter, quit <-chan int) itertools.
 		return false
 	}
 
-	return itertools.FilterQuit(fFilter, it, quit1)
+	return itertools.Filter(fFilter, itMap)
+
+	/**/
+
 }
 
 //Iter to Parse App Version info in App
-func AppVersions(trs itertools.Iter, quit <-chan int) (versions map[string]string) {
-	itVersions := ParseAppLog(FuncAppVersionLog, trs, quit)
+func AppVersions(trs itertools.Iter) (versions map[string]string) {
+	itVersions := ParseAppLog(FuncAppVersionLog, trs)
 	vers := <-itVersions
 	if vers == nil {
 		return
@@ -477,8 +559,8 @@ func AppVersions(trs itertools.Iter, quit <-chan int) (versions map[string]strin
 }
 
 //Iter to Parse Tables Version info in App
-func TabVersions(trs itertools.Iter, quit <-chan int) (versions map[string]string) {
-	itVersions := ParseAppLog(FuncTabVersionLog, trs, quit)
+func TabVersions(trs itertools.Iter) (versions map[string]string) {
+	itVersions := ParseAppLog(FuncTabVersionLog, trs)
 	mapVers := make(map[string]string)
 	for v:= range itVersions {
 		switch tab := v.(type) {
@@ -500,22 +582,14 @@ func TabVersions(trs itertools.Iter, quit <-chan int) (versions map[string]strin
 //Iter to App Logs Data
 func ReadAppLogs(timeout int, quit <-chan int) itertools.Iter {
 
-	quit0 := make(chan int)
 	quit1 := make(chan int)
-	iterFile := AppLogs(quit0)
+	files := AppLogs()
 
 	/**/
 	itData := make(itertools.Iter)
 	go func() {
 		id := 0
 		defer func() {
-			go func() {
-				select {
-				case quit0 <- id:
-				default:
-					close(quit0)
-				}
-			}()
 			go func() {
 				select {
 				case quit1 <- id:
@@ -525,7 +599,7 @@ func ReadAppLogs(timeout int, quit <-chan int) itertools.Iter {
 			}()
 			close(itData)
 		}()
-		for file := range iterFile {
+		for _, file := range files {
 			content, err := os.Open(PATH_LOGS + file.(os.FileInfo).Name())
 			if err != nil {
 				fmt.Println("ERROR: ",err)
@@ -551,9 +625,20 @@ func ReadAppLogs(timeout int, quit <-chan int) itertools.Iter {
 	return itData
 }
 
-func CountUsosAfter(iterUsosLog itertools.Iter, timeref int64, quit <-chan int) (int64, int64) {
-
+func CountUsosAfter(iterUsosLog itertools.Iter, timeref int64) (int64, int64) {
 	fFilter1 := func(i interface{}) bool {
+		switch v := i.(type) {
+		case UsoTransporte:
+			if v.UsoId >= timeref {
+				return true
+			}
+		}
+		return false
+	}
+
+	iterUsosAfter := itertools.TakeWhile(fFilter1,iterUsosLog)
+
+	fFilter2 := func(i interface{}) bool {
 		switch v := i.(type) {
 		case UsoTransporte:
 			ok := v.Exitoso
@@ -564,19 +649,8 @@ func CountUsosAfter(iterUsosLog itertools.Iter, timeref int64, quit <-chan int) 
 		}
 		return false
 	}
-	iterUsos := itertools.FilterQuit(fFilter1,iterUsosLog, quit)
+	iterUsos := itertools.Filter(fFilter2, iterUsosAfter)
 
-	fFilter2 := func(i interface{}) bool {
-		switch v := i.(type) {
-		case UsoTransporte:
-			if v.UsoId >= timeref {
-				return true
-			}
-		}
-		return false
-	}
-
-	iterUsosAfter := itertools.TakeWhile(fFilter2,iterUsos)
 
 	fReducer := func(memo interface{}, element interface{}) interface{} {
 		switch v:= element.(type) {
@@ -590,22 +664,13 @@ func CountUsosAfter(iterUsosLog itertools.Iter, timeref int64, quit <-chan int) 
 	}
 
 	memo := []int64{0,0}
-	countUsos := itertools.Reduce(iterUsosAfter, fReducer, memo)
+	countUsos := itertools.Reduce(iterUsos, fReducer, memo)
 
 	return countUsos.(([]int64))[0], countUsos.(([]int64))[1]
 }
 
-func CountErrorsAfter(iterUsosLog itertools.Iter, timeref int64, quit <-chan int) (int64, int64) {
+func CountErrorsAfter(iterUsosLog itertools.Iter, timeref int64) (int64, int64) {
 	fFilter1 := func(i interface{}) bool {
-		switch v := i.(type) {
-		case UsoTransporte:
-			return !v.Exitoso && v.UsoId > 0
-		}
-		return false
-	}
-	iterUsos := itertools.FilterQuit(fFilter1,iterUsosLog, quit)
-
-	fFilter2 := func(i interface{}) bool {
 		switch v := i.(type) {
 		case UsoTransporte:
 			if v.UsoId >= timeref {
@@ -615,7 +680,17 @@ func CountErrorsAfter(iterUsosLog itertools.Iter, timeref int64, quit <-chan int
 		return false
 	}
 
-	iterUsosAfter := itertools.TakeWhile(fFilter2,iterUsos)
+	iterUsosAfter := itertools.TakeWhile(fFilter1,iterUsosLog)
+
+	fFilter2 := func(i interface{}) bool {
+		switch v := i.(type) {
+		case UsoTransporte:
+			return !v.Exitoso && v.UsoId > 0
+		}
+		return false
+	}
+	iterUsos := itertools.Filter(fFilter2, iterUsosAfter)
+
 
 	fReducer := func(memo interface{}, element interface{}) interface{} {
 		switch v := element.(type) {
@@ -629,7 +704,7 @@ func CountErrorsAfter(iterUsosLog itertools.Iter, timeref int64, quit <-chan int
 	}
 
 	memo := []int64{0,0}
-	countUsos := itertools.Reduce(iterUsosAfter, fReducer, memo)
+	countUsos := itertools.Reduce(iterUsos, fReducer, memo)
 
 	return countUsos.(([]int64))[0], countUsos.(([]int64))[1]
 }
