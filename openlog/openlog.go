@@ -57,7 +57,7 @@ type UsoTransporte struct {
 	PTnvContarj	int	`json:"p_tnv_contarj"`
 	PTnvPasos	int	`json:"p_tnv_pasos"`
 	PEquSerieAnt	int	`json:"p_equ_serie_ant(NO_DEFINIDO)"`
-	PTnvAalorLiq	int	`json:"p_tnv_valor_liq"`
+	PTnvValorLiq	int	`json:"p_tnv_valor_liq"`
 	PTnvValorCred	int	`json:"p_tnv_valor_cred"`
 	PTnvSaldoCred	int	`json:"p_tnv_saldo_cred"`
 	PTnvSecUsoEnTrayecto	int	`json:"p_tnv_sec_uso_en_trayecto"`
@@ -86,10 +86,16 @@ type UsoTransporte struct {
 type AppLogData struct {
 	TimeRef		int64
 	Data		interface{}
+	Level		string
+}
+
+type MessageType struct {
+	Data		string
+	Level		string
 }
 
 //Function to Filter in Parse Iteration
-type FuncParseLog func(data string) AppLogData
+type FuncParseLog func(data MessageType) AppLogData
 
 //Iter of App Log Transsaction (transacciones.html*)
 func TransactionsLogs() []os.FileInfo {
@@ -154,10 +160,22 @@ func MessageData(node *html.Node, iterData itertools.Iter, timeout int, quit <-c
 		for _, a := range node.Attr {
 			if a.Key == "title" && a.Val == "Message" {
 				if node.FirstChild.Data != "" {
+					data := MessageType{}
+					data.Data = node.FirstChild.Data
+					//fmt.Printf("log: %+v\n", node.PrevSibling.PrevSibling.LastChild)
+					if node.PrevSibling != nil &&
+						node.PrevSibling.PrevSibling != nil &&
+						node.PrevSibling.PrevSibling.LastChild != nil {
+						if node.PrevSibling.PrevSibling.LastChild.Type == 1 {
+							data.Level = node.PrevSibling.PrevSibling.LastChild.Data
+						} else {
+							 data.Level = node.PrevSibling.PrevSibling.LastChild.LastChild.LastChild.Data
+						}
+					}
 					select {
 					case <-quit:
 						return false
-					case iterData <- node.FirstChild.Data:
+					case iterData <- data:
 					}
 				}
 				return true
@@ -174,8 +192,11 @@ func MessageData(node *html.Node, iterData itertools.Iter, timeout int, quit <-c
 }
 /**/
 
-func parseUsoLog(data string) (uso UsoTransporte)  {
-	fieldsRaw := strings.Split(data, ";;;")
+func parseUsoLog(data MessageType) (uso UsoTransporte)  {
+	if data.Data == "" {
+		return
+	}
+	fieldsRaw := strings.Split(data.Data, ";;;")
 	if len(fieldsRaw) != 3 {
 		return
 	}
@@ -262,10 +283,10 @@ func ParseUsosLog(trs itertools.Iter) itertools.Iter {
 
         fMapper := func(i interface{}) interface{} {
 		switch v:= i.(type) {
-                case string:
+                case MessageType:
 			return parseUsoLog(v)
 		}
-		return parseUsoLog("")
+		return parseUsoLog(MessageType{})
         }
 
 	itMap := itertools.Map(fMapper, trs)
@@ -341,11 +362,21 @@ type Sys struct {
 
 //Read log Transactions in mode "Tail" until quit<- channel
 func ReadTransactionsTail(timeout int, quit <-chan int) itertools.Iter {
+	quit1 := make(chan int)
 	itData := make(itertools.Iter)
 	go func() {
-		defer close(itData)
+		id := 0
+		defer func() {
+                        go func() {
+                                select {
+                                case quit1 <- id:
+                                default:
+                                        close(quit1)
+                                }
+                        }()
+                        close(itData)
+                }()
 		stat0, err := os.Stat(PATH_LOGS + "transacciones.html")
-		//fmt.Printf("stat0: %+v\n", stat0)
 		if err != nil {
 			fmt.Println("ERROR: ",err)
 		}
@@ -354,12 +385,12 @@ func ReadTransactionsTail(timeout int, quit <-chan int) itertools.Iter {
 			timeout = 1
 		}
 		timer := time.Tick(time.Second * time.Duration(timeout))
-					file, err := os.Open(PATH_LOGS + "transacciones.html")
-					if err != nil {
-						fmt.Println("ERROR: ",err)
-						return
-					}
-					defer file.Close()
+		file, err := os.Open(PATH_LOGS + "transacciones.html")
+		if err != nil {
+			fmt.Println("ERROR: ",err)
+			return
+		}
+		defer file.Close()
 		for {
 			select {
 			case <-quit:
@@ -369,24 +400,19 @@ func ReadTransactionsTail(timeout int, quit <-chan int) itertools.Iter {
 				if err != nil {
 					fmt.Println("ERROR: ",err)
 				}
-				//fmt.Printf("stat1: %+v\n", stat1)
 				if stat0.Size() != stat1.Size() || stat0.ModTime() != stat1.ModTime() {
-				//|| (stat0.Sys().(*syscall.Stat_t)).Ctim != (stat1.Sys().(*syscall.Stat_t)).Ctim {
 					//fmt.Println("changed!!!!!!")
 					size := stat1.Size() - stat0.Size()
 					if size >= 0 {
 						file.Seek(-size, 2)
-						//fmt.Printf("size: %v, seek: %v\n", size, seek)
 					} else {
 						file.Seek(stat0.Size(), 0)
-						//fmt.Printf("size: %v, seek: %v\n", size, seek)
 					}
 					stat0 = stat1
 					content := bytes.NewBuffer([]byte("<html><table>"))
 					for i:=0; i>=0; i++ {
 						n1, err := file.Read(buff)
 						if err != nil || n1 <= 0 {
-							//fmt.Printf("ERROR!!!!: %s, %v, iter: %v\n", err, n1, i)
 							break
 						}
 						content.Write(buff)
@@ -402,7 +428,6 @@ func ReadTransactionsTail(timeout int, quit <-chan int) itertools.Iter {
 						for i:=0; i>=0; i++ {
 							n1, err := file.Read(buff)
 							if err != nil || n1 <= 0 {
-								//fmt.Printf("ERROR!!!!: %s, %v, iter: %v\n", err, n1, i)
 								break
 							}
 							content.Write(buff)
@@ -410,12 +435,13 @@ func ReadTransactionsTail(timeout int, quit <-chan int) itertools.Iter {
                                         }
 
 
-					//fmt.Printf("Content %s\n", content)
 					doc, _ := html.Parse(content)
-					data := &Data{}
-					messageData(doc, data)
-					//fmt.Println("saliendo de messageData: ", data.buffer)
-					for _, v := range data.buffer {
+					//data := &Data{}
+					//messageData(doc, data)
+					iterData := make(itertools.Iter)
+		                        go MessageData(doc, iterData, 0, quit1)
+					//for _, v := range data.buffer {
+					for v := range iterData {
 						select {
 						case <-quit:
 							return
@@ -430,15 +456,157 @@ func ReadTransactionsTail(timeout int, quit <-chan int) itertools.Iter {
 	return itData
 }
 
-//Function to Parse App Version info
-func FuncAppVersionLog(data string) AppLogData {
+//Read log Transactions in mode "Tail" until quit<- channel
+func ReadAppLogsTail(timeout int, quit <-chan int) itertools.Iter {
+	quit1 := make(chan int)
+	itData := make(itertools.Iter)
+	go func() {
+		id := 0
+		defer func() {
+                        go func() {
+                                select {
+                                case quit1 <- id:
+                                default:
+                                        close(quit1)
+                                }
+                        }()
+                        close(itData)
+                }()
+		stat0, err := os.Stat(PATH_LOGS + "log.html")
+		if err != nil {
+			fmt.Println("ERROR: ",err)
+		}
+		buff := make([]byte,1024)
+		if timeout <= 0 {
+			timeout = 1
+		}
+		timer := time.Tick(time.Second * time.Duration(timeout))
+		file, err := os.Open(PATH_LOGS + "log.html")
+		if err != nil {
+			fmt.Println("ERROR: ",err)
+			return
+		}
+		defer file.Close()
+		for {
+			select {
+			case <-quit:
+				return
+			case <-timer:
+				stat1, err := os.Stat(PATH_LOGS + "log.html")
+				if err != nil {
+					fmt.Println("ERROR: ",err)
+				}
+				if stat0.Size() != stat1.Size() || stat0.ModTime() != stat1.ModTime() {
+					//fmt.Println("LOG changed!!!!!!")
+					size := stat1.Size() - stat0.Size()
+					if size >= 0 {
+						file.Seek(-size, 2)
+					} else {
+						file.Seek(stat0.Size(), 0)
+					}
+					stat0 = stat1
+					content := bytes.NewBuffer([]byte("<html><table>"))
+					for i:=0; i>=0; i++ {
+						n1, err := file.Read(buff)
+						if err != nil || n1 <= 0 {
+							break
+						}
+						content.Write(buff)
+					}
+
+					if size < 0 {
+						//fmt.Println("ReOpen!!!!")
+						file.Close()
+						file, err = os.Open(PATH_LOGS + "log.html")
+						if err != nil {
+							fmt.Println("ERROR: ",err)
+						}
+						for i:=0; i>=0; i++ {
+							n1, err := file.Read(buff)
+							if err != nil || n1 <= 0 {
+								break
+							}
+							content.Write(buff)
+						}
+                                        }
+
+
+					doc, _ := html.Parse(content)
+					//data := &Data{}
+					//messageData(doc, data)
+					iterData := make(itertools.Iter)
+		                        go MessageData(doc, iterData, 0, quit1)
+					//for _, v := range data.buffer {
+					for v := range iterData {
+						select {
+						case <-quit:
+							return
+						case itData <- v:
+						}
+					}
+					//file.Close()
+				}
+			}
+		}
+	}()
+	return itData
+}
+
+//Function to Parse Subruta info
+func FuncSubrutaLog(data MessageType) AppLogData {
 	appData := AppLogData{}
-	if !strings.Contains(data,"Versiones Librearias") {
+	if data.Data == "" {
+		return appData
+	}
+	if !strings.Contains(data.Data,"subruta") {
 		return appData
 	}
 
 	re := regexp.MustCompile("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")
-	timeS := re.FindString(data)
+	timeS := re.FindString(data.Data)
+	if timeS != "" {
+		loc, _ := time.LoadLocation("America/Bogota")
+		t, _ := time.ParseInLocation(SHORT_FORM, timeS, loc)
+		appData.TimeRef = t.UnixNano()
+	}
+	/**/
+	fField := func(c rune) bool {
+		return c == ';' || c == '{'
+	}
+
+	string1 := strings.FieldsFunc(data.Data, fField)
+	if len(string1) < 2 {
+		return appData
+	}
+
+	string2 := strings.Trim(string1[1], " ")
+	fieldsRaw := strings.Split(string2, ", ")
+
+	versions := make(map[string]string)
+	for i:=0; i < len(fieldsRaw)-1; i++ {
+		els1 := strings.Split(fieldsRaw[i],":")
+		if len(els1) > 1 && els1[0] != "" {
+			versions[els1[0]] = strings.Trim(els1[1], " ")
+		}
+	}
+
+	appData.Data = versions
+
+	return appData
+}
+
+//Function to Parse Log errors
+func FuncErrorLog(data MessageType) AppLogData {
+	appData := AppLogData{}
+	if data.Data == "" {
+		return appData
+	}
+	if !strings.Contains(data.Level,"ERROR") && !strings.Contains(data.Level,"FATAL") {
+		return appData
+	}
+
+	re := regexp.MustCompile("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")
+	timeS := re.FindString(data.Data)
 	if timeS != "" {
 		loc, _ := time.LoadLocation("America/Bogota")
 		t, _ := time.ParseInLocation(SHORT_FORM, timeS, loc)
@@ -446,7 +614,38 @@ func FuncAppVersionLog(data string) AppLogData {
 	}
 
 	/**/
-	fieldsRaw := strings.Split(data, "\n")
+	fieldsRaw := strings.Split(data.Data, ": ")
+
+	if len(fieldsRaw) < 2 {
+		return appData
+	}
+
+	appData.Data = fieldsRaw[1]
+	appData.Level = data.Level
+
+	return appData
+}
+
+//Function to Parse App Version info
+func FuncAppVersionLog(data MessageType) AppLogData {
+	appData := AppLogData{}
+	if data.Data == "" {
+		return appData
+	}
+	if !strings.Contains(data.Data,"Versiones Librearias") {
+		return appData
+	}
+
+	re := regexp.MustCompile("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")
+	timeS := re.FindString(data.Data)
+	if timeS != "" {
+		loc, _ := time.LoadLocation("America/Bogota")
+		t, _ := time.ParseInLocation(SHORT_FORM, timeS, loc)
+		appData.TimeRef = t.UnixNano()
+	}
+
+	/**/
+	fieldsRaw := strings.Split(data.Data, "\n")
 
 	if len(fieldsRaw) < 3 {
 		return appData
@@ -466,15 +665,18 @@ func FuncAppVersionLog(data string) AppLogData {
 }
 
 //Function to Parse Tables Version info in App
-func FuncTabVersionLog(data string) AppLogData {
+func FuncTabVersionLog(data MessageType) AppLogData {
 	appData := AppLogData{}
-	if !strings.Contains(data,"Se han actualizado las siguientes tablas") && !strings.Contains(data,"ha iniciado con") {
+	if data.Data == "" {
+		return appData
+	}
+	if !strings.Contains(data.Data,"Se han actualizado las siguientes tablas") && !strings.Contains(data.Data,"ha iniciado con") {
 		return appData
 	}
 
 	/**/
 	re1 := regexp.MustCompile("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}")
-	timeS := re1.FindString(data)
+	timeS := re1.FindString(data.Data)
 	if timeS != "" {
 		loc, _ := time.LoadLocation("America/Bogota")
 		t, _ := time.ParseInLocation(SHORT_FORM, timeS, loc)
@@ -482,7 +684,7 @@ func FuncTabVersionLog(data string) AppLogData {
 	}
 
 	re2 := regexp.MustCompile("siguientes tablas: +\\[(.+):(.+)\\]")
-	fields2 := re2.FindStringSubmatch(data)
+	fields2 := re2.FindStringSubmatch(data.Data)
 
 	if len(fields2) > 2 && fields2[1] != "" && fields2[2] != "" {
 		versions2 := map[string]string{ fields2[1]: fields2[2] }
@@ -491,7 +693,7 @@ func FuncTabVersionLog(data string) AppLogData {
 	}
 
 	re3 := regexp.MustCompile("ha iniciado con (.+) en version: (\\d+\\.{0,1}\\d{0,4})")
-        fields3 := re3.FindStringSubmatch(data)
+        fields3 := re3.FindStringSubmatch(data.Data)
 
 	if len(fields3) > 2 && fields3[1] != "" && fields3[2] != "" {
 		versions3 := map[string]string{ fields3[1]: fields3[2] }
@@ -527,11 +729,20 @@ func ParseAppLog(f FuncParseLog, trs itertools.Iter) itertools.Iter {
 	/**/
         fMapper := func(i interface{}) interface{} {
 		switch v:= i.(type) {
+                case MessageType:
+			return f(v)
+                }
+		return f(MessageType{})
+        }
+	/**
+        fMapper := func(i interface{}) interface{} {
+		switch v:= i.(type) {
                 case string:
 			return f(v)
                 }
 		return f("")
         }
+	/**/
 	itMap := itertools.Map(fMapper, trs)
 
 	fFilter := func(i interface{}) bool {

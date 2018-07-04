@@ -30,18 +30,33 @@ flag.Parse()
     }
 
 	for {
-		/**
+		/**/
 		log.Printf("goroutines start: %d\n", runtime.NumGoroutine())
-		quit1 := make(chan bool)
-		itLogs := openlog.ReadAppLogs(0, quit1)
+		quit1 := make(chan int)
+		itLogs1 := openlog.ReadAppLogs(0, quit1)
 		//iterLogs := itertools.Tee(itLogs, 2)
 		log.Printf("goroutines step1: %d\n", runtime.NumGoroutine())
 
-		iterLibs1 := openlog.ParseAppLog(openlog.FuncAppVersionLog, itLogs)
+		iterLibs1 := openlog.ParseAppLog(openlog.FuncAppVersionLog, itLogs1)
 		log.Printf("goroutines step2: %d\n", runtime.NumGoroutine())
 
 		log.Printf("App version: %q\n", (<-iterLibs1).(openlog.AppLogData).Data)
-		quit1 <- true
+		quit1 <- 11
+		//close(iterLibs1)
+		log.Printf("goroutines step3: %d\n", runtime.NumGoroutine())
+
+		/**/
+		log.Printf("goroutines start: %d\n", runtime.NumGoroutine())
+		quit2 := make(chan int)
+		itLogs2 := openlog.ReadAppLogs(0, quit2)
+		//iterLogs := itertools.Tee(itLogs, 2)
+		log.Printf("goroutines step1: %d\n", runtime.NumGoroutine())
+
+		iterLibs2 := openlog.ParseAppLog(openlog.FuncSubrutaLog, itLogs2)
+		log.Printf("goroutines step2: %d\n", runtime.NumGoroutine())
+
+		log.Printf("App version: %q\n", (<-iterLibs2).(openlog.AppLogData).Data)
+		quit2 <- 11
 		//close(iterLibs1)
 		log.Printf("goroutines step3: %d\n", runtime.NumGoroutine())
 
@@ -89,7 +104,7 @@ flag.Parse()
 
 
 		fFilter0 := func(i interface{}) bool {
-			return i.(openlog.UsoTransporte).UsoId > 1530225830461
+			return i.(openlog.UsoTransporte).UsoId > 1530625744149
 			//return i.(openlog.UsoTransporte).UsoId > 1523989505114
 			//return i.(openlog.UsoTransporte).UsoId > 0
 		}
