@@ -169,7 +169,11 @@ func MessageData(node *html.Node, iterData itertools.Iter, timeout int, quit <-c
 						if node.PrevSibling.PrevSibling.LastChild.Type == 1 {
 							data.Level = node.PrevSibling.PrevSibling.LastChild.Data
 						} else {
-							 data.Level = node.PrevSibling.PrevSibling.LastChild.LastChild.LastChild.Data
+							if node.PrevSibling.PrevSibling.LastChild.LastChild != nil {
+								if node.PrevSibling.PrevSibling.LastChild.LastChild.LastChild != nil {
+									data.Level = node.PrevSibling.PrevSibling.LastChild.LastChild.LastChild.Data
+								}
+							}
 						}
 					}
 					select {
@@ -583,7 +587,7 @@ func FuncSubrutaLog(data MessageType) AppLogData {
 	fieldsRaw := strings.Split(string2, ", ")
 
 	versions := make(map[string]string)
-	for i:=0; i < len(fieldsRaw)-1; i++ {
+	for i:=0; i < len(fieldsRaw); i++ {
 		els1 := strings.Split(fieldsRaw[i],":")
 		if len(els1) > 1 && els1[0] != "" {
 			versions[els1[0]] = strings.Trim(els1[1], " ")
