@@ -30,7 +30,7 @@ type Data struct {
 	buffer	[]string
 }
 
-//Transportation Use object
+//Transportation Use object in the log register
 type UsoTransporte struct {
 	TipoTarjeta	string
 	CivicaBefore	Civica
@@ -83,12 +83,14 @@ type UsoTransporte struct {
 	EscrituraMs	int	`json:"escrituraMs"`
 }
 
+//APP log Data
 type AppLogData struct {
 	TimeRef		int64
 	Data		interface{}
 	Level		string
 }
 
+//Message Type. Data is the field to data, and Level is the field to Tag Level (INFO, WARN, FATAL, SEVERE, DEBUG)
 type MessageType struct {
 	Data		string
 	Level		string
@@ -162,7 +164,6 @@ func MessageData(node *html.Node, iterData itertools.Iter, timeout int, quit <-c
 				if node.FirstChild.Data != "" {
 					data := MessageType{}
 					data.Data = node.FirstChild.Data
-					//fmt.Printf("log: %+v\n", node.PrevSibling.PrevSibling.LastChild)
 					if node.PrevSibling != nil &&
 						node.PrevSibling.PrevSibling != nil &&
 						node.PrevSibling.PrevSibling.LastChild != nil {
@@ -261,7 +262,7 @@ func parseUsoLog(data MessageType) (uso UsoTransporte)  {
 	return
 }
 
-//Parse Log Transaction in UsosTranspote
+//Parse Log Transaction to UsosTransporte Object
 func ParseUsosLog(trs itertools.Iter) itertools.Iter {
 	/**
 	quit0 := make(chan int)
