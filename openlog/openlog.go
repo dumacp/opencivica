@@ -389,7 +389,8 @@ func ReadTransactionsTail(timeout int, quit <-chan int) itertools.Iter {
 		if timeout <= 0 {
 			timeout = 1
 		}
-		timer := time.Tick(time.Second * time.Duration(timeout))
+		timer := time.NewTicker(time.Second * time.Duration(timeout))
+		defer timer.Stop()
 		file, err := os.Open(PATH_LOGS + "transacciones.html")
 		if err != nil {
 			fmt.Println("ERROR: ",err)
@@ -400,7 +401,7 @@ func ReadTransactionsTail(timeout int, quit <-chan int) itertools.Iter {
 			select {
 			case <-quit:
 				return
-			case <-timer:
+			case <-timer.C:
 				stat1, err := os.Stat(PATH_LOGS + "transacciones.html")
 				if err != nil {
 					fmt.Println("ERROR: ",err)
@@ -485,7 +486,8 @@ func ReadAppLogsTail(timeout int, quit <-chan int) itertools.Iter {
 		if timeout <= 0 {
 			timeout = 1
 		}
-		timer := time.Tick(time.Second * time.Duration(timeout))
+		timer := time.NewTicker(time.Second * time.Duration(timeout))
+		defer timer.Stop()
 		file, err := os.Open(PATH_LOGS + "log.html")
 		if err != nil {
 			fmt.Println("ERROR: ",err)
@@ -496,7 +498,7 @@ func ReadAppLogsTail(timeout int, quit <-chan int) itertools.Iter {
 			select {
 			case <-quit:
 				return
-			case <-timer:
+			case <-timer.C:
 				stat1, err := os.Stat(PATH_LOGS + "log.html")
 				if err != nil {
 					fmt.Println("ERROR: ",err)
